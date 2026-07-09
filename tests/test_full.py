@@ -624,6 +624,37 @@ def test_concurrent_stats_consistent_after_burst():
     assert stats["total_revenue_cents"] == sum(c["price_cents"] for c in created)
 
 
+def test_concurrent_registration_same_new_org_single_admin():
+    org = uniq("org")
+
+    def attempt(i):
+        return register(org, f"user{i}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(attempt, range(8)))
+
+    statuses = [r.status_code for r in results]
+    assert all(s == 201 for s in statuses), statuses  # no 500s from a duplicate-org race
+    roles = [r.json()["role"] for r in results]
+    assert roles.count("admin") == 1, roles
+    assert roles.count("member") == 7, roles
+
+
+def test_concurrent_registration_same_org_and_username():
+    org = uniq("org")
+
+    def attempt(_i):
+        return register(org, "alice")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(attempt, range(8)))
+
+    statuses = [r.status_code for r in results]
+    assert statuses.count(201) == 1, statuses
+    assert statuses.count(409) == 7, statuses
+    assert all(s in (201, 409) for s in statuses)  # no unhandled 500s
+
+
 def test_liveness_concurrent_create_and_cancel_no_hang():
     org, tok = make_org_admin()
     room = make_room(tok)
