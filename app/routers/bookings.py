@@ -85,8 +85,11 @@ def create_booking(
 ):
     ratelimit.record_and_check(user.id)
 
-    start = parse_input_datetime(payload.start_time)
-    end = parse_input_datetime(payload.end_time)
+    try:
+        start = parse_input_datetime(payload.start_time)
+        end = parse_input_datetime(payload.end_time)
+    except ValueError:
+        raise AppError(400, "INVALID_BOOKING_WINDOW", "Invalid start_time or end_time format")
     now = datetime.utcnow()
 
     if start <= now:

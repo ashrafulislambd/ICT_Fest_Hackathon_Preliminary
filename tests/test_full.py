@@ -222,6 +222,23 @@ def test_booking_past_start_rejected_no_grace():
     assert r.json()["code"] == "INVALID_BOOKING_WINDOW"
 
 
+def test_booking_malformed_datetime_is_400_not_500():
+    org, tok = make_org_admin()
+    room = make_room(tok)
+    for start_v, end_v in [
+        ("not-a-date", "also-not-a-date"),
+        ("2026-13-01T10:00:00", "2026-13-01T11:00:00"),  # month 13
+        ("garbage", "2026-01-01T11:00:00+00:00"),
+    ]:
+        r = client.post(
+            "/bookings",
+            json={"room_id": room["id"], "start_time": start_v, "end_time": end_v},
+            headers=auth_headers(tok),
+        )
+        assert r.status_code == 400, (start_v, end_v, r.status_code, r.text)
+        assert r.json()["code"] == "INVALID_BOOKING_WINDOW", r.text
+
+
 def test_booking_start_must_be_strictly_future_no_grace_window():
     # start "now" (i.e. barely in the past by request-processing time) must fail;
     # this specifically targets the removed 300s grace window.
