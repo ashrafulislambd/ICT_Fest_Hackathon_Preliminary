@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -24,8 +25,11 @@ from .models import User
 _revoked_tokens: set[str] = set()
 
 # Refresh tokens are single-use: once redeemed via /auth/refresh, their jti is
-# recorded here so a replay is rejected.
+# recorded here so a replay is rejected. Guarded by a lock so concurrent
+# requests presenting the same refresh token can't all pass the "not yet
+# used" check before any of them records it as used.
 _revoked_refresh_tokens: set[str] = set()
+_refresh_redemption_lock = threading.Lock()
 
 _PBKDF2_ROUNDS = 100_000
 
@@ -90,13 +94,17 @@ def revoke_access_token(payload: dict) -> None:
     _revoked_tokens.add(payload["jti"])
 
 
-def revoke_refresh_token(payload: dict) -> None:
-    _revoked_refresh_tokens.add(payload["jti"])
+def redeem_refresh_token(payload: dict) -> None:
+    """Atomically check-and-mark a refresh token's jti as used.
 
-
-def check_refresh_not_revoked(payload: dict) -> None:
-    if payload.get("jti") in _revoked_refresh_tokens:
-        raise AppError(401, "UNAUTHORIZED", "Refresh token has already been used")
+    Raises if it was already redeemed; otherwise marks it used in the same
+    locked step so a concurrent replay of the same token is rejected.
+    """
+    jti = payload["jti"]
+    with _refresh_redemption_lock:
+        if jti in _revoked_refresh_tokens:
+            raise AppError(401, "UNAUTHORIZED", "Refresh token has already been used")
+        _revoked_refresh_tokens.add(jti)
 
 
 def get_token_payload(request: Request) -> dict:

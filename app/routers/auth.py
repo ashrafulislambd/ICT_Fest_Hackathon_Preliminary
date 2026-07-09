@@ -5,14 +5,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..auth import (
-    check_refresh_not_revoked,
     create_access_token,
     create_refresh_token,
     decode_token,
     get_token_payload,
     hash_password,
+    redeem_refresh_token,
     revoke_access_token,
-    revoke_refresh_token,
     verify_password,
 )
 from ..database import get_db
@@ -89,11 +88,10 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     data = decode_token(payload.refresh_token)
     if data.get("type") != "refresh":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
-    check_refresh_not_revoked(data)
+    redeem_refresh_token(data)
     user = db.query(User).filter(User.id == int(data["sub"])).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
-    revoke_refresh_token(data)
     return {
         "access_token": create_access_token(user),
         "refresh_token": create_refresh_token(user),

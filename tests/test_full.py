@@ -131,6 +131,21 @@ def test_refresh_rotates_and_old_refresh_token_rejected():
     assert r3.status_code == 200
 
 
+def test_concurrent_refresh_same_token_single_use():
+    org, tok = make_org_admin()
+    refresh_token = login(org, "admin1").json()["refresh_token"]
+
+    def attempt():
+        return client.post("/auth/refresh", json={"refresh_token": refresh_token})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        results = list(ex.map(lambda _: attempt(), range(6)))
+
+    statuses = [r.status_code for r in results]
+    assert statuses.count(200) == 1, statuses
+    assert statuses.count(401) == 5, statuses
+
+
 # ---------------------------------------------------------------------------
 # Multi-tenancy
 # ---------------------------------------------------------------------------
@@ -462,6 +477,19 @@ def test_usage_report_includes_zero_booking_rooms():
     to = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
     report = client.get(f"/admin/usage-report?from={frm}&to={to}", headers=auth_headers(tok)).json()
     assert any(r["room_id"] == room["id"] and r["confirmed_bookings"] == 0 for r in report["rooms"])
+
+
+def test_usage_report_reflects_new_room_created_after_cache_primed():
+    org, tok = make_org_admin()
+    frm = datetime.now(timezone.utc).date().isoformat()
+    to = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    # prime the cache for this (org, frm, to) key before the room exists
+    report_before = client.get(f"/admin/usage-report?from={frm}&to={to}", headers=auth_headers(tok)).json()
+    assert not any(True for _ in report_before["rooms"])
+
+    room = make_room(tok)
+    report_after = client.get(f"/admin/usage-report?from={frm}&to={to}", headers=auth_headers(tok)).json()
+    assert any(r["room_id"] == room["id"] for r in report_after["rooms"]), report_after
 
 
 def test_room_stats_live():
