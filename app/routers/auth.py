@@ -3,12 +3,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..auth import (
+    check_refresh_not_revoked,
     create_access_token,
     create_refresh_token,
     decode_token,
     get_token_payload,
     hash_password,
     revoke_access_token,
+    revoke_refresh_token,
     verify_password,
 )
 from ..database import get_db
@@ -35,12 +37,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         .first()
     )
     if existing is not None:
-        return {
-            "user_id": existing.id,
-            "org_id": org.id,
-            "username": existing.username,
-            "role": existing.role,
-        }
+        raise AppError(409, "USERNAME_TAKEN", "Username already taken in this organization")
 
     user = User(
         org_id=org.id,
@@ -83,9 +80,11 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     data = decode_token(payload.refresh_token)
     if data.get("type") != "refresh":
         raise AppError(401, "UNAUTHORIZED", "Wrong token type")
+    check_refresh_not_revoked(data)
     user = db.query(User).filter(User.id == int(data["sub"])).first()
     if user is None:
         raise AppError(401, "UNAUTHORIZED", "Unknown user")
+    revoke_refresh_token(data)
     return {
         "access_token": create_access_token(user),
         "refresh_token": create_refresh_token(user),
